@@ -1,0 +1,8 @@
+{"type":"response.created","response":{"id":"resp-custom-lifecycle"}}
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-lifecycle-1","run_id":"run-lifecycle","started_at":1234567890}}
+{"type":"response.output_item.added","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":""}]}}
+{"type":"response.output_text.delta","delta":"Working on it..."}
+{"type":"response.output_text.delta","delta":" Done!"}
+{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Working on it... Done!"}]}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-lifecycle-1","run_id":"run-lifecycle","completed_at":1234567900,"duration_ms":10000,"last_agent_message":"Working on it... Done!"}}
+{"type":"response.completed","response":{"id":"resp-custom-lifecycle"}}

@@ -95,8 +95,11 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::PlanDeltaEvent;
 use codex_protocol::protocol::ReasoningContentDeltaEvent;
 use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
+use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnDiffEvent;
+use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::WarningEvent;
+use serde_json::Value;
 use codex_protocol::user_input::UserInput;
 use codex_tools::ToolName;
 use codex_tools::filter_request_plugin_install_discoverable_tools_for_client;
@@ -2181,6 +2184,55 @@ async fn try_run_sampling_request(
                         .await;
                 } else {
                     error_or_panic("ReasoningRawContentDelta without active item".to_string());
+                }
+            }
+            ResponseEvent::EventMsg(payload) => {
+                // Custom provider lifecycle hint — map to native turn events.
+                let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
+                match payload_type {
+                    "task_started" => {
+                        let turn_id = payload.get("turn_id").and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| turn_context.sub_id.clone());
+                        let started_at = payload.get("started_at")
+                            .and_then(Value::as_i64);
+                        let event = EventMsg::TurnStarted(TurnStartedEvent {
+                            turn_id,
+                            trace_id: None,
+                            started_at,
+                            model_context_window: None,
+                            collaboration_mode_kind: turn_context.collaboration_mode.mode,
+                        });
+                        sess.send_event(&turn_context, event).await;
+                    }
+                    "task_complete" => {
+                        let turn_id = payload.get("turn_id").and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| turn_context.sub_id.clone());
+                        let completed_at = payload.get("completed_at")
+                            .and_then(Value::as_i64);
+                        let duration_ms = payload.get("duration_ms")
+                            .or_else(|| payload.get("durationMs"))
+                            .and_then(Value::as_i64);
+                        let last_agent_message = payload.get("last_agent_message")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .or(last_agent_message.take());
+                        let event = EventMsg::TurnComplete(TurnCompleteEvent {
+                            turn_id,
+                            last_agent_message,
+                            completed_at,
+                            duration_ms,
+                            time_to_first_token_ms: None,
+                        });
+                        sess.send_event(&turn_context, event).await;
+                    }
+                    other => {
+                        tracing::trace!(
+                            "ignoring unknown event_msg payload type: {}",
+                            other
+                        );
+                    }
                 }
             }
         }

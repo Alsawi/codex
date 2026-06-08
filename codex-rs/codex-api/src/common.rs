@@ -111,6 +111,12 @@ pub enum ResponseEvent {
     },
     RateLimits(RateLimitSnapshot),
     ModelsEtag(String),
+    /// Opaque lifecycle hint from a custom provider Responses stream.
+    /// The payload is a JSON value whose `type` field determines semantics:
+    ///   - `"task_started"`: turn has started (maps to native `TurnStarted`)
+    ///   - `"task_complete"`: turn has completed (maps to native `TurnComplete`)
+    ///   - other: ignored with trace logging
+    EventMsg(Value),
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]

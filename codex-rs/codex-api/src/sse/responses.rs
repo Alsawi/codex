@@ -156,6 +156,11 @@ pub struct ResponsesStreamEvent {
     delta: Option<String>,
     summary_index: Option<i64>,
     content_index: Option<i64>,
+    /// Opaque payload carried by `event_msg` events from custom providers.
+    /// Contains lifecycle hints such as `task_started` or `task_complete`.
+    /// Ignored for all other event types.
+    #[serde(default)]
+    payload: Option<Value>,
 }
 
 impl ResponsesStreamEvent {
@@ -400,6 +405,12 @@ pub fn process_responses_event(
                     summary_index,
                 }));
             }
+        }
+        "event_msg" => {
+            if let Some(payload) = event.payload {
+                return Ok(Some(ResponseEvent::EventMsg(payload)));
+            }
+            trace!("event_msg without payload, ignoring");
         }
         _ => {
             trace!("unhandled responses event: {}", event.kind);
@@ -1000,6 +1011,9 @@ mod tests {
         fn is_completed(ev: &ResponseEvent) -> bool {
             matches!(ev, ResponseEvent::Completed { .. })
         }
+        fn is_event_msg(ev: &ResponseEvent) -> bool {
+            matches!(ev, ResponseEvent::EventMsg(_))
+        }
 
         let completed = json!({
             "type": "response.completed",
@@ -1043,6 +1057,18 @@ mod tests {
                 event: json!({"type": "response.new_tool_event"}),
                 expect_first: is_completed,
                 expected_len: 1,
+            },
+            TestCase {
+                name: "event_msg",
+                event: json!({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_started",
+                        "turn_id": "t-1"
+                    }
+                }),
+                expect_first: is_event_msg,
+                expected_len: 2,
             },
         ];
 
@@ -1398,4 +1424,190 @@ mod tests {
     }
 
     const CYBER_RESTRICTED_MODEL_FOR_TESTS: &str = "gpt-5.3-codex";
+
+    // --- event_msg tests ---
+
+    #[test]
+    fn process_responses_event_parses_event_msg_with_payload() {
+        let event = ResponsesStreamEvent {
+            kind: "event_msg".to_string(),
+            headers: None,
+            metadata: None,
+            response: None,
+            item: None,
+            item_id: None,
+            call_id: None,
+            delta: None,
+            summary_index: None,
+            content_index: None,
+            payload: Some(json!({
+                "type": "task_started",
+                "turn_id": "turn-42",
+                "started_at": 1234567890
+            })),
+        };
+        let result = process_responses_event(event)
+            .expect("should not error")
+            .expect("should return an event");
+        match result {
+            ResponseEvent::EventMsg(payload) => {
+                assert_eq!(payload.get("type").and_then(Value::as_str), Some("task_started"));
+                assert_eq!(payload.get("turn_id").and_then(Value::as_str), Some("turn-42"));
+            }
+            other => panic!("expected EventMsg, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn process_responses_event_ignores_event_msg_without_payload() {
+        let event = ResponsesStreamEvent {
+            kind: "event_msg".to_string(),
+            headers: None,
+            metadata: None,
+            response: None,
+            item: None,
+            item_id: None,
+            call_id: None,
+            delta: None,
+            summary_index: None,
+            content_index: None,
+            payload: None,
+        };
+        let result = process_responses_event(event).expect("should not error");
+        assert!(result.is_none(), "event_msg without payload should produce None");
+    }
+
+    #[tokio::test]
+    async fn event_msg_task_started_preserves_payload_in_sse_stream() {
+        let events = run_sse(vec![
+            json!({
+                "type": "response.created",
+                "response": { "id": "resp-1" }
+            }),
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_started",
+                    "turn_id": "turn-custom-1",
+                    "run_id": "run-abc",
+                    "started_at": 1234567890
+                }
+            }),
+            json!({
+                "type": "response.output_item.done",
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Done"}]
+                }
+            }),
+            json!({
+                "type": "response.completed",
+                "response": { "id": "resp-1" }
+            }),
+        ])
+        .await;
+
+        // events: Created, EventMsg, OutputItemDone, Completed
+        assert_eq!(events.len(), 4);
+        assert_matches!(&events[0], ResponseEvent::Created);
+        match &events[1] {
+            ResponseEvent::EventMsg(payload) => {
+                assert_eq!(payload.get("type").and_then(Value::as_str), Some("task_started"));
+                assert_eq!(payload.get("turn_id").and_then(Value::as_str), Some("turn-custom-1"));
+            }
+            other => panic!("expected EventMsg, got {other:?}"),
+        }
+        assert_matches!(&events[2], ResponseEvent::OutputItemDone(_));
+        assert_matches!(&events[3], ResponseEvent::Completed { .. });
+    }
+
+    #[tokio::test]
+    async fn event_msg_task_complete_preserves_payload_in_sse_stream() {
+        let events = run_sse(vec![
+            json!({
+                "type": "response.created",
+                "response": { "id": "resp-2" }
+            }),
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "turn_id": "turn-custom-2",
+                    "completed_at": 1234567900,
+                    "duration_ms": 10000,
+                    "last_agent_message": "All done"
+                }
+            }),
+            json!({
+                "type": "response.completed",
+                "response": { "id": "resp-2" }
+            }),
+        ])
+        .await;
+
+        // events: Created, EventMsg, Completed
+        assert_eq!(events.len(), 3);
+        match &events[1] {
+            ResponseEvent::EventMsg(payload) => {
+                assert_eq!(payload.get("type").and_then(Value::as_str), Some("task_complete"));
+                assert_eq!(payload.get("duration_ms").and_then(Value::as_i64), Some(10000));
+                assert_eq!(payload.get("last_agent_message").and_then(Value::as_str), Some("All done"));
+            }
+            other => panic!("expected EventMsg, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn event_msg_without_payload_ignored_in_sse_stream() {
+        let events = run_sse(vec![
+            json!({
+                "type": "response.created",
+                "response": { "id": "resp-3" }
+            }),
+            json!({
+                "type": "event_msg"
+            }),
+            json!({
+                "type": "response.completed",
+                "response": { "id": "resp-3" }
+            }),
+        ])
+        .await;
+
+        // events: Created, Completed (event_msg without payload is ignored)
+        assert_eq!(events.len(), 2);
+        assert_matches!(&events[0], ResponseEvent::Created);
+        assert_matches!(&events[1], ResponseEvent::Completed { .. });
+    }
+
+    #[tokio::test]
+    async fn existing_output_text_delta_unchanged_with_event_msg() {
+        let events = run_sse(vec![
+            json!({
+                "type": "response.output_text.delta",
+                "delta": "Hello"
+            }),
+            json!({
+                "type": "event_msg",
+                "payload": { "type": "task_started" }
+            }),
+            json!({
+                "type": "response.output_text.delta",
+                "delta": " world"
+            }),
+            json!({
+                "type": "response.completed",
+                "response": { "id": "resp-4" }
+            }),
+        ])
+        .await;
+
+        // events: OutputTextDelta("Hello"), EventMsg, OutputTextDelta(" world"), Completed
+        assert_eq!(events.len(), 4);
+        assert_matches!(&events[0], ResponseEvent::OutputTextDelta(d) if d == "Hello");
+        assert_matches!(&events[1], ResponseEvent::EventMsg(_));
+        assert_matches!(&events[2], ResponseEvent::OutputTextDelta(d) if d == " world");
+        assert_matches!(&events[3], ResponseEvent::Completed { .. });
+    }
 }
