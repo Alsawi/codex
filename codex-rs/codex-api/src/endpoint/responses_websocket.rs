@@ -667,6 +667,11 @@ async fn run_websocket_response_stream(
 
         match message {
             Message::Text(text) => {
+                tracing::info!(
+                    "[DEBUG-PATCH] WS received text frame: len={}, preview={}",
+                    text.len(),
+                    if text.len() > 200 { &text[..200] } else { &text }
+                );
                 trace!("websocket event: {text}");
                 if let Some(wrapped_error) = parse_wrapped_websocket_error_event(&text)
                     && let Some(error) =
@@ -721,13 +726,22 @@ async fn run_websocket_response_stream(
                 match process_responses_event(event) {
                     Ok(Some(event)) => {
                         let is_completed = matches!(event, ResponseEvent::Completed { .. });
+                        tracing::info!(
+                            "[DEBUG-PATCH] WS process_responses_event -> Some({:?}), is_completed={}",
+                            std::mem::discriminant(&event),
+                            is_completed
+                        );
                         let _ = tx_event.send(Ok(event)).await;
                         if is_completed {
+                            tracing::info!("[DEBUG-PATCH] WS breaking loop on response.completed");
                             break;
                         }
                     }
-                    Ok(None) => {}
+                    Ok(None) => {
+                        tracing::info!("[DEBUG-PATCH] WS process_responses_event -> None (event dropped/skipped)");
+                    }
                     Err(error) => {
+                        tracing::warn!("[DEBUG-PATCH] WS process_responses_event -> Error: {:?}", error);
                         return Err(error.into_api_error());
                     }
                 }

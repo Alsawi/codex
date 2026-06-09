@@ -43,6 +43,10 @@ impl SessionTask for RegularTask {
         let sess = session.clone_session();
         let turn_extension_data = session.turn_extension_data();
         let run_turn_span = trace_span!("run_turn");
+        tracing::info!(
+            "[DEBUG-PATCH] RegularTask::run START: sub_id={}, input_count={}",
+            ctx.sub_id, input.len()
+        );
         // Regular turns emit `TurnStarted` inline so first-turn lifecycle does
         // not wait on startup prewarm resolution.
         let event = EventMsg::TurnStarted(TurnStartedEvent {
@@ -52,6 +56,10 @@ impl SessionTask for RegularTask {
             model_context_window: ctx.model_context_window(),
             collaboration_mode_kind: ctx.collaboration_mode.mode,
         });
+        tracing::info!(
+            "[DEBUG-PATCH] RegularTask::run EMITTING TurnStarted: sub_id={}, started_at={:?}",
+            ctx.sub_id, event
+        );
         sess.send_event(ctx.as_ref(), event).await;
         sess.set_server_reasoning_included(/*included*/ false).await;
         let prewarmed_client_session = match sess
@@ -66,7 +74,13 @@ impl SessionTask for RegularTask {
         };
         let mut next_input = input;
         let mut prewarmed_client_session = prewarmed_client_session;
+        let mut loop_count = 0u32;
         loop {
+            loop_count += 1;
+            tracing::info!(
+                "[DEBUG-PATCH] RegularTask::run loop iteration {}: sub_id={}",
+                loop_count, ctx.sub_id
+            );
             let last_agent_message = run_turn(
                 Arc::clone(&sess),
                 Arc::clone(&ctx),
@@ -78,6 +92,10 @@ impl SessionTask for RegularTask {
             .instrument(run_turn_span.clone())
             .await;
             if !sess.input_queue.has_pending_input(&sess.active_turn).await {
+                tracing::info!(
+                    "[DEBUG-PATCH] RegularTask::run END: sub_id={}, loop_count={}, last_agent_message={:?}",
+                    ctx.sub_id, loop_count, last_agent_message.as_ref().map(|m| if m.len() > 80 { &m[..80] } else { m.as_str() })
+                );
                 return last_agent_message;
             }
             next_input = Vec::new();

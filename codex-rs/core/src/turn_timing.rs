@@ -91,6 +91,10 @@ impl TurnTimingState {
         state.first_token_at = None;
         state.first_message_at = None;
         self.profile_state().start(started_at);
+        tracing::info!(
+            "[DEBUG-PATCH] mark_turn_started: started_at={:?}, started_at_unix_ms={}",
+            started_at, started_at_unix_ms
+        );
         started_at_unix_ms
     }
 
@@ -104,6 +108,10 @@ impl TurnTimingState {
         let duration_ms = state
             .started_at
             .map(|started_at| i64::try_from(started_at.elapsed().as_millis()).unwrap_or(i64::MAX));
+        tracing::info!(
+            "[DEBUG-PATCH] completed_at_and_duration_ms: started_at={:?}, completed_at={:?}, duration_ms={:?}",
+            state.started_at, completed_at, duration_ms
+        );
         (completed_at, duration_ms)
     }
 

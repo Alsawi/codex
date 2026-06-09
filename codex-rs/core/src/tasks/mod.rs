@@ -323,6 +323,10 @@ impl Session {
         let task_kind = task.kind();
         let span_name = task.span_name();
         let started_at = Instant::now();
+        tracing::info!(
+            "[DEBUG-PATCH] start_task: task_kind={:?}, sub_id={}, started_at={:?}",
+            task_kind, turn_context.sub_id, started_at
+        );
         let turn_started_at_unix_ms = turn_context
             .turn_timing_state
             .mark_turn_started(started_at)
@@ -392,6 +396,10 @@ impl Session {
         let handle = tokio::spawn(
             async move {
                 let ctx_for_finish = Arc::clone(&ctx);
+                tracing::info!(
+                    "[DEBUG-PATCH] tokio::spawn task START: sub_id={}",
+                    ctx_for_finish.sub_id
+                );
                 let last_agent_message = task_for_run
                     .run(
                         Arc::clone(&session_ctx),
@@ -400,6 +408,12 @@ impl Session {
                         task_cancellation_token.child_token(),
                     )
                     .await;
+                tracing::info!(
+                    "[DEBUG-PATCH] tokio::spawn task RUN completed: sub_id={}, last_agent_message={:?}, cancelled={}",
+                    ctx_for_finish.sub_id,
+                    last_agent_message.as_ref().map(|m| if m.len() > 80 { &m[..80] } else { m.as_str() }),
+                    task_cancellation_token.is_cancelled()
+                );
                 let sess = session_ctx.clone_session();
                 if let Err(err) = sess.flush_rollout().await {
                     warn!("failed to flush rollout before completing turn: {err}");
@@ -414,9 +428,18 @@ impl Session {
                     .await;
                 }
                 if !task_cancellation_token.is_cancelled() {
+                    tracing::info!(
+                        "[DEBUG-PATCH] tokio::spawn calling on_task_finished: sub_id={}",
+                        ctx_for_finish.sub_id
+                    );
                     // Emit completion uniformly from spawn site so all tasks share the same lifecycle.
                     sess.on_task_finished(Arc::clone(&ctx_for_finish), last_agent_message)
                         .await;
+                } else {
+                    tracing::warn!(
+                        "[DEBUG-PATCH] tokio::spawn SKIPPING on_task_finished (cancelled): sub_id={}",
+                        ctx_for_finish.sub_id
+                    );
                 }
                 done_clone.notify_waiters();
             }
@@ -555,6 +578,10 @@ impl Session {
         turn_context: Arc<TurnContext>,
         last_agent_message: Option<String>,
     ) {
+        tracing::info!(
+            "[DEBUG-PATCH] on_task_finished: sub_id={}, last_agent_message={:?}",
+            turn_context.sub_id, last_agent_message.as_ref().map(|m| if m.len() > 80 { &m[..80] } else { m.as_str() })
+        );
         turn_context
             .turn_metadata_state
             .cancel_git_enrichment_task();
@@ -730,6 +757,10 @@ impl Session {
             .turn_timing_state
             .time_to_first_token_ms()
             .await;
+        tracing::info!(
+            "[DEBUG-PATCH] on_task_finished BEFORE emit: sub_id={}, completed_at={:?}, duration_ms={:?}, time_to_first_token_ms={:?}",
+            turn_context.sub_id, completed_at, duration_ms, time_to_first_token_ms
+        );
         self.services
             .analytics_events_client
             .track_turn_profile(TurnProfileFact {
@@ -745,6 +776,10 @@ impl Session {
             duration_ms,
             time_to_first_token_ms,
         });
+        tracing::info!(
+            "[DEBUG-PATCH] on_task_finished EMITTING TurnComplete: sub_id={}, duration_ms={:?}",
+            turn_context.sub_id, duration_ms
+        );
         self.send_event(turn_context.as_ref(), event).await;
         self.services
             .guardian_rejection_circuit_breaker

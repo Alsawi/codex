@@ -1663,6 +1663,16 @@ impl Session {
 
     /// Persist the event to rollout and send it to clients.
     pub(crate) async fn send_event(&self, turn_context: &TurnContext, msg: EventMsg) {
+        let event_name = match &msg {
+            EventMsg::TurnStarted(e) => format!("TurnStarted(turn_id={})", e.turn_id),
+            EventMsg::TurnComplete(e) => format!("TurnComplete(turn_id={}, duration_ms={:?})", e.turn_id, e.duration_ms),
+            EventMsg::TurnAborted(e) => format!("TurnAborted(turn_id={:?}, duration_ms={:?})", e.turn_id, e.duration_ms),
+            other => format!("{:?}", std::mem::discriminant(other)),
+        };
+        tracing::info!(
+            "[DEBUG-PATCH] send_event: sub_id={}, event={}",
+            turn_context.sub_id, event_name
+        );
         let legacy_source = msg.clone();
         self.services
             .rollout_thread_trace
@@ -1825,6 +1835,16 @@ impl Session {
         if let Some(status) = agent_status_from_event(&event.msg) {
             self.agent_status.send_replace(status);
         }
+        let event_debug = match &event.msg {
+            EventMsg::TurnStarted(e) => format!("TurnStarted({})", e.turn_id),
+            EventMsg::TurnComplete(e) => format!("TurnComplete({}, duration_ms={:?})", e.turn_id, e.duration_ms),
+            EventMsg::TurnAborted(e) => format!("TurnAborted({:?}, duration_ms={:?})", e.turn_id, e.duration_ms),
+            other => format!("{:?}", std::mem::discriminant(other)),
+        };
+        tracing::info!(
+            "[DEBUG-PATCH] deliver_event_raw: id={}, event={}",
+            event.id, event_debug
+        );
         if let Err(e) = self.tx_event.send(event).await {
             debug!("dropping event because channel is closed: {e}");
         }

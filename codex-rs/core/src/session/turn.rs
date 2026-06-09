@@ -2059,6 +2059,10 @@ async fn try_run_sampling_request(
                 end_turn,
                 ..
             } => {
+                tracing::info!(
+                    "[DEBUG-PATCH] run_sampling_request got ResponseEvent::Completed: end_turn={:?}, needs_follow_up={}, has_token_usage={}",
+                    end_turn, needs_follow_up, token_usage.is_some()
+                );
                 flush_assistant_text_segments_all(
                     &sess,
                     &turn_context,

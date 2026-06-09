@@ -281,6 +281,10 @@ impl ResponsesEventError {
 pub fn process_responses_event(
     event: ResponsesStreamEvent,
 ) -> std::result::Result<Option<ResponseEvent>, ResponsesEventError> {
+    tracing::info!(
+        "[DEBUG-PATCH] process_responses_event: kind={}",
+        event.kind
+    );
     match event.kind.as_str() {
         "response.output_item.done" => {
             if let Some(item_val) = event.item {
@@ -377,6 +381,10 @@ pub fn process_responses_event(
             if let Some(resp_val) = event.response {
                 match serde_json::from_value::<ResponseCompleted>(resp_val) {
                     Ok(resp) => {
+                        tracing::info!(
+                            "[DEBUG-PATCH] response.completed: id={}, end_turn={:?}, has_usage={}",
+                            resp.id, resp.end_turn, resp.usage.is_some()
+                        );
                         return Ok(Some(ResponseEvent::Completed {
                             response_id: resp.id,
                             token_usage: resp.usage.map(Into::into),
@@ -413,6 +421,10 @@ pub fn process_responses_event(
             trace!("event_msg without payload, ignoring");
         }
         _ => {
+            tracing::warn!(
+                "[DEBUG-PATCH] process_responses_event: UNHANDLED/DROPPED event kind={}",
+                event.kind
+            );
             trace!("unhandled responses event: {}", event.kind);
         }
     }

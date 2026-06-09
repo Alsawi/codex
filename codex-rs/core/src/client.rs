@@ -1624,6 +1624,11 @@ impl ModelClientSession {
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
         let wire_api = self.client.state.provider.info().wire_api;
+        let ws_enabled = self.client.responses_websocket_enabled();
+        tracing::info!(
+            "[DEBUG-PATCH] ModelClientSession::stream: wire_api={:?}, ws_enabled={}, model={}",
+            wire_api, ws_enabled, model_info.slug
+        );
         match wire_api {
             WireApi::Responses => {
                 if self.client.responses_websocket_enabled() {
