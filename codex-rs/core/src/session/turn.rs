@@ -95,11 +95,8 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::PlanDeltaEvent;
 use codex_protocol::protocol::ReasoningContentDeltaEvent;
 use codex_protocol::protocol::ReasoningRawContentDeltaEvent;
-use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnDiffEvent;
-use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::WarningEvent;
-use serde_json::Value;
 use codex_protocol::user_input::UserInput;
 use codex_tools::ToolName;
 use codex_tools::filter_request_plugin_install_discoverable_tools_for_client;
@@ -111,6 +108,7 @@ use codex_utils_stream_parser::strip_citations;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 use futures::stream::FuturesOrdered;
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 use tracing::error;
@@ -2188,50 +2186,16 @@ async fn try_run_sampling_request(
                 }
             }
             ResponseEvent::EventMsg(payload) => {
-                // Custom provider lifecycle hint — map to native turn events.
-                // Always use turn_context.sub_id as the turn_id: custom providers
-                // do not own Codex app-server turn IDs, and using a foreign ID
-                // would break turn-state tracking in bespoke_event_handling.rs.
+                // Custom provider lifecycle hints arrive inside an already-owned Codex turn.
+                // Do not forward them as native TurnStarted/TurnComplete events: the app-server
+                // emits the authoritative turn lifecycle itself, and forwarding provider hints
+                // creates duplicate turn notifications that can destabilize Desktop reconnects.
                 let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
-                match payload_type {
-                    "task_started" => {
-                        let started_at = payload.get("started_at")
-                            .and_then(Value::as_i64);
-                        let event = EventMsg::TurnStarted(TurnStartedEvent {
-                            turn_id: turn_context.sub_id.clone(),
-                            trace_id: None,
-                            started_at,
-                            model_context_window: None,
-                            collaboration_mode_kind: turn_context.collaboration_mode.mode,
-                        });
-                        sess.send_event(&turn_context, event).await;
-                    }
-                    "task_complete" => {
-                        let completed_at = payload.get("completed_at")
-                            .and_then(Value::as_i64);
-                        let duration_ms = payload.get("duration_ms")
-                            .or_else(|| payload.get("durationMs"))
-                            .and_then(Value::as_i64);
-                        let last_agent_message = payload.get("last_agent_message")
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                            .or(last_agent_message.take());
-                        let event = EventMsg::TurnComplete(TurnCompleteEvent {
-                            turn_id: turn_context.sub_id.clone(),
-                            last_agent_message,
-                            completed_at,
-                            duration_ms,
-                            time_to_first_token_ms: None,
-                        });
-                        sess.send_event(&turn_context, event).await;
-                    }
-                    other => {
-                        tracing::trace!(
-                            "ignoring unknown event_msg payload type: {}",
-                            other
-                        );
-                    }
-                }
+                tracing::trace!(
+                    payload_type,
+                    turn_id = %turn_context.sub_id,
+                    "ignoring custom provider event_msg lifecycle hint inside active Codex turn"
+                );
             }
         }
     };

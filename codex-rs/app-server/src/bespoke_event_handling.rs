@@ -151,6 +151,20 @@ pub(crate) async fn apply_bespoke_event_handling(
     } = event;
     match msg {
         EventMsg::TurnStarted(payload) => {
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/codex-appserver-lifecycle-debug.log")
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(
+                        f,
+                        "bespoke received TurnStarted event_turn_id={} payload_turn_id={} started_at={:?}",
+                        event_turn_id,
+                        payload.turn_id,
+                        payload.started_at
+                    )
+                });
             // While not technically necessary as it was already done on TurnComplete, be extra cautios and abort any pending server requests.
             outgoing.abort_pending_server_requests().await;
             thread_watch_manager
@@ -176,11 +190,39 @@ pub(crate) async fn apply_bespoke_event_handling(
                 thread_id: conversation_id.to_string(),
                 turn,
             };
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/codex-appserver-lifecycle-debug.log")
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(
+                        f,
+                        "bespoke sending ServerNotification::TurnStarted turn_id={} status={:?}",
+                        notification.turn.id, notification.turn.status
+                    )
+                });
             outgoing
                 .send_server_notification(ServerNotification::TurnStarted(notification))
                 .await;
         }
         EventMsg::TurnComplete(turn_complete_event) => {
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/codex-appserver-lifecycle-debug.log")
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(
+                        f,
+                        "bespoke received TurnComplete event_turn_id={} payload_turn_id={} completed_at={:?} duration_ms={:?} has_last_agent_message={}",
+                        event_turn_id,
+                        turn_complete_event.turn_id,
+                        turn_complete_event.completed_at,
+                        turn_complete_event.duration_ms,
+                        turn_complete_event.last_agent_message.is_some()
+                    )
+                });
             // All per-thread requests are bound to a turn, so abort them.
             outgoing.abort_pending_server_requests().await;
             respond_to_pending_interrupts(&thread_state, &outgoing).await;
@@ -1339,6 +1381,21 @@ async fn emit_turn_completed_with_status(
             duration_ms: turn_completion_metadata.duration_ms,
         },
     };
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/codex-appserver-lifecycle-debug.log")
+        .and_then(|mut f| {
+            use std::io::Write;
+            writeln!(
+                f,
+                "bespoke sending ServerNotification::TurnCompleted turn_id={} status={:?} completed_at={:?} duration_ms={:?}",
+                notification.turn.id,
+                notification.turn.status,
+                notification.turn.completed_at,
+                notification.turn.duration_ms
+            )
+        });
     outgoing
         .send_server_notification(ServerNotification::TurnCompleted(notification))
         .await;
@@ -1506,6 +1563,23 @@ async fn handle_turn_complete(
     thread_state: &Arc<Mutex<ThreadState>>,
 ) {
     let turn_summary = find_and_remove_turn_summary(conversation_id, thread_state).await;
+
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/codex-appserver-lifecycle-debug.log")
+        .and_then(|mut f| {
+            use std::io::Write;
+            writeln!(
+                f,
+                "bespoke handle_turn_complete event_turn_id={} summary_started_at={:?} summary_last_error={} payload_completed_at={:?} payload_duration_ms={:?}",
+                event_turn_id,
+                turn_summary.started_at,
+                turn_summary.last_error.is_some(),
+                turn_complete_event.completed_at,
+                turn_complete_event.duration_ms
+            )
+        });
 
     let (status, error) = match turn_summary.last_error {
         Some(error) => (TurnStatus::Failed, Some(error)),
